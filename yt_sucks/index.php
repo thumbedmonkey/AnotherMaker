@@ -1,7 +1,45 @@
 <?php
 session_start();
-$version = "2.0.0";
-$date = "May 17, 2025";
+$version = "2.0.1";
+$date = "Oct 4, 2025";
+
+//
+/**
+ * Fetches the content of a remote URL using cURL.
+ * @param string $url The URL to fetch.
+ * @return string|false The content of the URL on success, or false on failure.
+ */
+function curl_get_contents($url) {
+    $ch = curl_init();
+    
+    // Set cURL options
+    curl_setopt($ch, CURLOPT_URL, $url);
+    // Return the transfer as a string instead of outputting it directly
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    // Follow any redirects
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    // Include the header in the output (we don't need this, so set to false)
+    curl_setopt($ch, CURLOPT_HEADER, 0);
+    // Set a timeout to prevent endless script execution
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    // Required for HTTPS to work properly
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    
+    // Execute the request
+    $content = curl_exec($ch);
+    
+    // Check for errors (optional, but good practice)
+    if (curl_errno($ch)) {
+        // You might log this error instead of returning false immediately
+        // error_log("cURL Error: " . curl_error($ch));
+        curl_close($ch);
+        return false;
+    }
+    
+    curl_close($ch);
+    return $content;
+}
+// ---------------------------------
 
 // Generate CSRF token and store it in session
 if (!isset($_SESSION['csrf_token'])) {
@@ -54,7 +92,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
     //throw away anything after and including the first "&"
     $url = explode("&", $url)[0];
-    $content = htmlspecialchars(file_get_contents($url));
+    
+
+    $remote_content = curl_get_contents($url);
+
+    if ($remote_content === false) {
+        // cURL failed to fetch the page
+        header("Location: " . $_SERVER['PHP_SELF'] . "?error=fetch_failed");
+        exit();
+    }
+
+    $content = htmlspecialchars($remote_content);
+
 
     // Apply regex to capture channel IDs
     preg_match_all('/\/UC([\w-]+)(?="|\/)/', $content, $matches);
@@ -72,22 +121,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Get the most frequent channel ID
         $mostFrequentChannel = array_keys($channelCounts, max($channelCounts))[0];
 
-        // Modify the channel ID
-        $modifiedChannelId = "UU" . $mostFrequentChannel;
-        
-        // If include_shorts is NOT checked, use UULF instead of UU to filter out shorts
+        // Determine the playlist prefix based on user choice
+        // UU is for "uploads"
+        // UULF is for "uploads, without shorts"
+        $prefix = "UU";
         if (!isset($_POST['include_shorts']) || $_POST['include_shorts'] != '1') {
-            $modifiedChannelId = "UULF" . $mostFrequentChannel;
+            $prefix = "UULF";
         }
+        
+        $modifiedChannelId = $prefix . $mostFrequentChannel;
 
         // Create the final URL
         $finalUrl = $url . "&list=" . $modifiedChannelId;
         
-        // If start_at_beginning is checked, add index=1
-        // if (isset($_POST['start_at_beginning']) && $_POST['start_at_beginning'] == '1') {
-        //     $finalUrl .= "&index=1";
-        // }
-
         // Redirect to the modified URL
         header("Location: $finalUrl");
         exit();
@@ -105,6 +151,8 @@ if ($error === 'invalid_url') {
     $errorMsg = 'Invalid URL. Please enter a valid YouTube video URL.';
 } elseif ($error === 'channel_id_not_found') {
     $errorMsg = 'YouTube Channel ID not found.';
+} elseif ($error === 'fetch_failed') {
+    $errorMsg = 'Failed to fetch content from the YouTube URL. This could be a temporary network issue.';
 }
 ?>
 
@@ -147,12 +195,6 @@ if ($error === 'invalid_url') {
                                     Include YouTube Shorts
                                 </label>
                             </div>
-                            <!-- <div class="input-group pt-2 pb-1">
-
-                                <input type="checkbox" name="start_at_beginning" class="form-check-input" id="start_at_beginning" value="1">
-                                <label for="start_at_beginning" class="ms-2">Start at the beginning of the channel</label>
-                            </div> -->
-
                         </div>
                         <button type="submit" class="btn btn-primary">Go</button>
                     </form>
